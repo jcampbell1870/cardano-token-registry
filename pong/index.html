@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PONG — Ethereum Rewards</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+    body {
+      background: #000;
+      color: #fff;
+      font-family: 'Press Start 2P', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: clamp(18px, 4vw, 32px);
+      letter-spacing: 8px;
+      text-shadow: 0 0 20px #0ff, 0 0 40px #0ff;
+      margin-bottom: 8px;
+    }
+
+    /* ── Wallet bar ───────────────────────────────────────────────── */
+    #wallet-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 12px;
+      font-size: 9px;
+    }
+
+    .pill {
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 20px;
+      padding: 6px 14px;
+    }
+
+    #wallet-address { color: #0ff; }
+    #network-badge  { color: #ff0; }
+    #pending-reward { color: #0f0; }
+
+    button {
+      font-family: inherit;
+      font-size: 9px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 16px;
+      transition: filter .15s;
+    }
+    button:hover  { filter: brightness(1.25); }
+    button:active { filter: brightness(.85); }
+
+    #btn-connect {
+      background: #f6851b;  /* MetaMask orange */
+      color: #000;
+    }
+    #btn-claim {
+      background: #0f0;
+      color: #000;
+      display: none;
+    }
+    #btn-claim.visible { display: inline-block; }
+
+    /* ── Canvas wrapper ───────────────────────────────────────────── */
+    #arena {
+      position: relative;
+      border: 2px solid #fff;
+      box-shadow: 0 0 30px #0ff4, 0 0 60px #0ff2;
+    }
+
+    canvas { display: block; }
+
+    /* Centre line ── drawn via CSS so we don't waste canvas pixels */
+    #centre-line {
+      position: absolute;
+      top: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 4px;
+      height: 100%;
+      background: repeating-linear-gradient(
+        to bottom,
+        #fff 0px, #fff 14px,
+        transparent 14px, transparent 28px
+      );
+      pointer-events: none;
+    }
+
+    /* ── Score & messages ─────────────────────────────────────────── */
+    #scores {
+      display: flex;
+      gap: 40px;
+      margin: 10px 0;
+      font-size: clamp(22px, 5vw, 40px);
+      text-shadow: 0 0 10px #fff;
+    }
+
+    #message {
+      font-size: 10px;
+      min-height: 18px;
+      color: #ff0;
+      letter-spacing: 2px;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    /* ── Controls legend ──────────────────────────────────────────── */
+    #controls {
+      display: flex;
+      gap: 30px;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 8px;
+      color: #888;
+      margin-top: 10px;
+    }
+
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+    .ctrl-group strong { color: #aaa; font-size: 9px; }
+
+    /* ── Reward log ───────────────────────────────────────────────── */
+    #reward-log {
+      width: min(640px, 100%);
+      max-height: 120px;
+      overflow-y: auto;
+      border: 1px solid #222;
+      background: #050505;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 8px;
+      color: #0f0;
+      margin-top: 10px;
+    }
+    #reward-log p { margin: 2px 0; }
+    #reward-log p.dim { color: #555; }
+
+    /* ── Modal overlay ────────────────────────────────────────────── */
+    #modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000c;
+      align-items: center;
+      justify-content: center;
+      z-index: 99;
+    }
+    #modal.show { display: flex; }
+    #modal-box {
+      background: #111;
+      border: 2px solid #0ff;
+      border-radius: 8px;
+      padding: 32px 40px;
+      text-align: center;
+      max-width: 380px;
+    }
+    #modal-box h2 { font-size: 14px; color: #0ff; margin-bottom: 16px; }
+    #modal-box p  { font-size: 9px; line-height: 1.8; color: #aaa; margin-bottom: 20px; }
+    #modal-box .eth { font-size: 20px; color: #0f0; margin: 10px 0; }
+    #modal-close { background: #0ff; color: #000; }
+  </style>
+</head>
+<body>
+
+<h1>P O N G</h1>
+
+<!-- ── Wallet bar ──────────────────────────────────────────────────── -->
+<div id="wallet-bar">
+  <button id="btn-connect">🦊 Connect MetaMask</button>
+  <span class="pill" id="wallet-address" style="display:none"></span>
+  <span class="pill" id="network-badge"  style="display:none"></span>
+  <span class="pill" id="pending-reward" style="display:none">Pending: 0 ETH</span>
+  <button id="btn-claim">⚡ Claim Rewards</button>
+</div>
+
+<!-- ── Scores ──────────────────────────────────────────────────────── -->
+<div id="scores">
+  <span id="score-left">0</span>
+  <span id="score-right">0</span>
+</div>
+
+<div id="message">Press SPACE or tap to start</div>
+
+<!-- ── Canvas ─────────────────────────────────────────────────────── -->
+<div id="arena">
+  <div id="centre-line"></div>
+  <canvas id="pong"></canvas>
+</div>
+
+<!-- ── Controls ───────────────────────────────────────────────────── -->
+<div id="controls">
+  <div class="ctrl-group">
+    <strong>LEFT PLAYER</strong>
+    <span>W — up</span>
+    <span>S — down</span>
+  </div>
+  <div class="ctrl-group">
+    <strong>RIGHT PLAYER</strong>
+    <span>↑ — up</span>
+    <span>↓ — down</span>
+  </div>
+  <div class="ctrl-group">
+    <strong>GAME</strong>
+    <span>SPACE — start/pause</span>
+    <span>First to 11 wins</span>
+  </div>
+</div>
+
+<!-- ── Reward log ──────────────────────────────────────────────────── -->
+<div id="reward-log"><p class="dim">Connect MetaMask to earn ETH rewards for playing.</p></div>
+
+<!-- ── Claim modal ─────────────────────────────────────────────────── -->
+<div id="modal">
+  <div id="modal-box">
+    <h2>CLAIM REWARDS</h2>
+    <p>You earned Ethereum by playing Pong!</p>
+    <div class="eth" id="modal-eth">0 ETH</div>
+    <p id="modal-status">Waiting for MetaMask confirmation…</p>
+    <button id="modal-close">CLOSE</button>
+  </div>
+</div>
+
+<!-- ethers v6 (UMD build) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.1/ethers.umd.min.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════════════
+const CONFIG = {
+  // Deployed PongRewards contract address (replace after deployment).
+  // Leave as null to run in DEMO mode (no on-chain tx required).
+  CONTRACT_ADDRESS: null,
+
+  // Reward rates (in ETH as strings for BigInt safety)
+  REWARD_PER_RALLY : 0.000010,  // ETH per rally (both players)
+  REWARD_PER_POINT : 0.000100,  // ETH for the player who scores
+  REWARD_WIN_BONUS : 0.000500,  // ETH bonus for winning a game
+
+  WIN_SCORE: 11,                // First to this score wins
+  CANVAS_W: 640,
+  CANVAS_H: 480,
+  PADDLE_W: 12,
+  PADDLE_H: 80,
+  BALL_SIZE: 12,
+  BALL_SPEED_INIT: 5,
+  BALL_SPEED_MAX : 14,
+  SPEED_INCREMENT: 0.35,
+};
+
+// Minimal ABI — only the functions we call
+const CONTRACT_ABI = [
+  "function claimRewards() external payable",
+  "function pendingReward(address player) external view returns (uint256)",
+  "function recordGame(address winner, uint32 rallies, uint32 points) external",
+  "event RewardClaimed(address indexed player, uint256 amount)",
+];
+
+// ═══════════════════════════════════════════════════════════════════
+//  WALLET STATE
+// ═══════════════════════════════════════════════════════════════════
+let provider, signer, contract, walletAddr;
+
+const $ = id => document.getElementById(id);
+const log = (msg, cls='') => {
+  const p = document.createElement('p');
+  if (cls) p.className = cls;
+  p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  $('reward-log').prepend(p);
+};
+
+async function connectWallet() {
+  if (!window.ethereum) {
+    alert('MetaMask is not installed. Please install it from metamask.io');
+    return;
+  }
+  try {
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer   = await provider.getSigner();
+    walletAddr = await signer.getAddress();
+
+    const network = await provider.getNetwork();
+    const chainNames = {
+      1n: 'Mainnet', 5n: 'Goerli', 11155111n: 'Sepolia',
+      137n: 'Polygon', 80001n: 'Mumbai',
+    };
+    const netName = chainNames[network.chainId] ?? `Chain ${network.chainId}`;
+
+    $('wallet-address').textContent = walletAddr.slice(0,6) + '…' + walletAddr.slice(-4);
+    $('network-badge').textContent  = netName;
+    $('wallet-address').style.display = '';
+    $('network-badge').style.display  = '';
+    $('pending-reward').style.display = '';
+    $('btn-connect').textContent = '✓ Connected';
+    $('btn-connect').style.background = '#0f0';
+
+    if (CONFIG.CONTRACT_ADDRESS) {
+      contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+      await refreshPendingReward();
+      log(`Wallet connected: ${walletAddr.slice(0,8)}… on ${netName}`);
+    } else {
+      log(`DEMO MODE — wallet connected: ${walletAddr.slice(0,8)}… (no contract deployed)`);
+      log('Deploy contract/PongRewards.sol and set CONFIG.CONTRACT_ADDRESS to go live.', 'dim');
+    }
+
+    // Watch for account / network changes
+    window.ethereum.on('accountsChanged', () => location.reload());
+    window.ethereum.on('chainChanged',    () => location.reload());
+
+  } catch (err) {
+    console.error(err);
+    log(`Connection failed: ${err.message}`);
+  }
+}
+
+async function refreshPendingReward() {
+  if (!contract) {
+    $('pending-reward').textContent = `Pending: ${pendingEth.toFixed(6)} ETH (demo)`;
+    return;
+  }
+  try {
+    const raw = await contract.pendingReward(walletAddr);
+    const eth = parseFloat(ethers.formatEther(raw));
+    $('pending-reward').textContent = `Pending: ${eth.toFixed(6)} ETH`;
+    $('btn-claim').classList.toggle('visible', eth > 0);
+  } catch(e) { console.warn(e); }
+}
+
+async function claimRewards() {
+  $('modal-status').textContent = 'Waiting for MetaMask confirmation…';
+  $('modal-eth').textContent    = `${pendingEth.toFixed(6)} ETH`;
+  $('modal').classList.add('show');
+
+  if (!contract) {
+    // Demo mode — just show the modal
+    $('modal-status').textContent = `DEMO: In live mode this would transfer ${pendingEth.toFixed(6)} ETH to your wallet!`;
+    log(`DEMO: Would claim ${pendingEth.toFixed(6)} ETH → ${walletAddr.slice(0,8)}…`);
+    pendingEth = 0;
+    updatePendingUI();
+    return;
+  }
+
+  try {
+    const tx = await contract.claimRewards();
+    $('modal-status').textContent = 'Transaction submitted — waiting for confirmation…';
+    log(`Tx submitted: ${tx.hash}`);
+    await tx.wait();
+    $('modal-status').textContent = 'Rewards claimed successfully!';
+    log(`Claimed successfully! Tx: ${tx.hash.slice(0,10)}…`);
+    pendingEth = 0;
+    await refreshPendingReward();
+  } catch(err) {
+    $('modal-status').textContent = `Error: ${err.reason ?? err.message}`;
+    log(`Claim failed: ${err.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PONG GAME
+// ═══════════════════════════════════════════════════════════════════
+const canvas = $('pong');
+const ctx    = canvas.getContext('2d');
+
+// Responsive sizing
+function resize() {
+  const maxW = Math.min(640, window.innerWidth - 32);
+  const scale = maxW / CONFIG.CANVAS_W;
+  canvas.width  = CONFIG.CANVAS_W;
+  canvas.height = CONFIG.CANVAS_H;
+  canvas.style.width  = `${CONFIG.CANVAS_W * scale}px`;
+  canvas.style.height = `${CONFIG.CANVAS_H * scale}px`;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = CONFIG.CANVAS_W;
+const H = CONFIG.CANVAS_H;
+const PW = CONFIG.PADDLE_W;
+const PH = CONFIG.PADDLE_H;
+const BS = CONFIG.BALL_SIZE;
+
+// ── Game state ─────────────────────────────────────────────────────
+let gameState = 'idle';   // idle | playing | paused | scored | gameover
+let pendingEth = 0;
+let sessionRallies = 0;
+
+const paddles = {
+  left:  { x: 20,       y: H/2 - PH/2, dy: 0, score: 0 },
+  right: { x: W-20-PW,  y: H/2 - PH/2, dy: 0, score: 0 },
+};
+
+const ball = {
+  x: W/2, y: H/2,
+  vx: 0,  vy: 0,
+  speed: CONFIG.BALL_SPEED_INIT,
+  trail: [],
+};
+
+function resetBall(dir = 1) {
+  ball.x  = W / 2;
+  ball.y  = H / 2;
+  ball.speed = CONFIG.BALL_SPEED_INIT;
+  const angle = (Math.random() * 60 - 30) * Math.PI / 180;
+  ball.vx = dir * ball.speed * Math.cos(angle);
+  ball.vy = ball.speed * Math.sin(angle);
+  ball.trail = [];
+}
+
+function resetGame() {
+  paddles.left.score  = 0;
+  paddles.right.score = 0;
+  paddles.left.y      = H/2 - PH/2;
+  paddles.right.y     = H/2 - PH/2;
+  sessionRallies = 0;
+  pendingEth     = 0;
+  updatePendingUI();
+  resetBall(1);
+  updateScoreUI();
+  gameState = 'idle';
+  setMessage('Press SPACE or tap to start');
+}
+
+// ── Keyboard ───────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Space') handleStart();
+});
+document.addEventListener('keyup',  e => { keys[e.code] = false; });
+
+// Touch / click on canvas
+canvas.addEventListener('click', handleStart);
+
+function handleStart() {
+  if (gameState === 'idle' || gameState === 'gameover') {
+    if (gameState === 'gameover') resetGame();
+    gameState = 'playing';
+    resetBall(Math.random() < .5 ? 1 : -1);
+    setMessage('');
+  } else if (gameState === 'playing') {
+    gameState = 'paused';
+    setMessage('PAUSED — press SPACE to resume');
+  } else if (gameState === 'paused') {
+    gameState = 'playing';
+    setMessage('');
+  }
+}
+
+// ── Update ─────────────────────────────────────────────────────────
+const PADDLE_SPEED = 7;
+
+function update() {
+  if (gameState !== 'playing') return;
+
+  // Left paddle: W / S  — Right paddle: ↑ / ↓
+  if (keys['KeyW'])       paddles.left.y  -= PADDLE_SPEED;
+  if (keys['KeyS'])       paddles.left.y  += PADDLE_SPEED;
+  if (keys['ArrowUp'])    paddles.right.y -= PADDLE_SPEED;
+  if (keys['ArrowDown'])  paddles.right.y += PADDLE_SPEED;
+
+  // Clamp paddles
+  paddles.left.y  = Math.max(0, Math.min(H - PH, paddles.left.y));
+  paddles.right.y = Math.max(0, Math.min(H - PH, paddles.right.y));
+
+  // Ball trail
+  ball.trail.push({ x: ball.x, y: ball.y });
+  if (ball.trail.length > 8) ball.trail.shift();
+
+  // Ball movement
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  // Wall bounce (top / bottom)
+  if (ball.y - BS/2 <= 0) { ball.y = BS/2; ball.vy = Math.abs(ball.vy); }
+  if (ball.y + BS/2 >= H) { ball.y = H - BS/2; ball.vy = -Math.abs(ball.vy); }
+
+  // Paddle collision helper
+  function hitPaddle(p) {
+    return ball.x - BS/2 < p.x + PW &&
+           ball.x + BS/2 > p.x &&
+           ball.y - BS/2 < p.y + PH &&
+           ball.y + BS/2 > p.y;
+  }
+
+  // Left paddle
+  if (ball.vx < 0 && hitPaddle(paddles.left)) {
+    const rel = (ball.y - (paddles.left.y + PH/2)) / (PH/2);
+    const angle = rel * 60 * Math.PI / 180;
+    ball.speed = Math.min(ball.speed + CONFIG.SPEED_INCREMENT, CONFIG.BALL_SPEED_MAX);
+    ball.vx =  Math.abs(ball.speed * Math.cos(angle));
+    ball.vy =  ball.speed * Math.sin(angle);
+    ball.x  = paddles.left.x + PW + BS/2;
+    onRally();
+  }
+
+  // Right paddle
+  if (ball.vx > 0 && hitPaddle(paddles.right)) {
+    const rel = (ball.y - (paddles.right.y + PH/2)) / (PH/2);
+    const angle = rel * 60 * Math.PI / 180;
+    ball.speed = Math.min(ball.speed + CONFIG.SPEED_INCREMENT, CONFIG.BALL_SPEED_MAX);
+    ball.vx = -Math.abs(ball.speed * Math.cos(angle));
+    ball.vy =  ball.speed * Math.sin(angle);
+    ball.x  = paddles.right.x - BS/2;
+    onRally();
+  }
+
+  // Scoring
+  if (ball.x < 0) { score('right'); return; }
+  if (ball.x > W) { score('left');  return; }
+}
+
+function onRally() {
+  sessionRallies++;
+  if (walletAddr) {
+    const earned = CONFIG.REWARD_PER_RALLY;
+    pendingEth  += earned;
+    updatePendingUI();
+    if (sessionRallies % 5 === 0) {
+      log(`+${earned.toFixed(6)} ETH — rally #${sessionRallies}`);
+    }
+  }
+}
+
+function score(side) {
+  paddles[side].score++;
+  updateScoreUI();
+  gameState = 'scored';
+
+  const earned = CONFIG.REWARD_PER_POINT;
+  if (walletAddr) {
+    pendingEth += earned;
+    updatePendingUI();
+    log(`+${earned.toFixed(6)} ETH — ${side === 'left' ? 'LEFT' : 'RIGHT'} scores!`);
+  }
+
+  if (paddles[side].score >= CONFIG.WIN_SCORE) {
+    onGameOver(side);
+  } else {
+    setMessage(`${side.toUpperCase()} scores!`);
+    setTimeout(() => {
+      resetBall(side === 'left' ? -1 : 1);
+      gameState = 'playing';
+      setMessage('');
+    }, 1200);
+  }
+}
+
+function onGameOver(winner) {
+  if (walletAddr) {
+    pendingEth += CONFIG.REWARD_WIN_BONUS;
+    updatePendingUI();
+    log(`+${CONFIG.REWARD_WIN_BONUS.toFixed(6)} ETH — WIN BONUS for ${winner.toUpperCase()}!`);
+
+    if (contract) {
+      // Fire-and-forget record game on chain
+      contract.recordGame(walletAddr, sessionRallies, paddles[winner].score)
+        .catch(e => console.warn('recordGame:', e));
+    }
+  }
+  setMessage(`${winner.toUpperCase()} WINS! SPACE to play again`);
+  gameState = 'gameover';
+}
+
+// ── Draw ───────────────────────────────────────────────────────────
+function draw() {
+  // Background
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  if (gameState === 'idle' || gameState === 'gameover') {
+    drawIdleScreen();
+  }
+
+  // Ball trail
+  ball.trail.forEach((p, i) => {
+    const alpha = (i + 1) / ball.trail.length * 0.4;
+    ctx.fillStyle = `rgba(0,255,255,${alpha})`;
+    const s = BS * ((i + 1) / ball.trail.length);
+    ctx.fillRect(p.x - s/2, p.y - s/2, s, s);
+  });
+
+  // Ball
+  ctx.fillStyle = '#fff';
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = '#0ff';
+  ctx.fillRect(ball.x - BS/2, ball.y - BS/2, BS, BS);
+  ctx.shadowBlur = 0;
+
+  // Paddles
+  drawPaddle(paddles.left);
+  drawPaddle(paddles.right);
+}
+
+function drawPaddle(p) {
+  ctx.fillStyle = '#fff';
+  ctx.shadowBlur   = 8;
+  ctx.shadowColor  = '#0ff';
+  ctx.fillRect(p.x, p.y, PW, PH);
+  ctx.shadowBlur = 0;
+}
+
+function drawIdleScreen() {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────
+function setMessage(txt) { $('message').textContent = txt; }
+
+function updateScoreUI() {
+  $('score-left').textContent  = paddles.left.score;
+  $('score-right').textContent = paddles.right.score;
+}
+
+function updatePendingUI() {
+  if (!walletAddr) return;
+  $('pending-reward').textContent = `Pending: ${pendingEth.toFixed(6)} ETH`;
+  $('btn-claim').classList.toggle('visible', pendingEth > 0);
+}
+
+// ── Game loop ──────────────────────────────────────────────────────
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ── Wire up buttons ────────────────────────────────────────────────
+$('btn-connect').addEventListener('click', connectWallet);
+$('btn-claim').addEventListener('click', claimRewards);
+$('modal-close').addEventListener('click', () => $('modal').classList.remove('show'));
+
+// ── Boot ───────────────────────────────────────────────────────────
+resetGame();
+loop();
+</script>
+</body>
+</html>
